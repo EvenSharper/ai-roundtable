@@ -101,11 +101,11 @@ node scripts/gate.mjs --declare H2
 |---|---|---|---|
 | `key.dpapi` 丢失或被覆盖，`data.enc` 与加密备份就永远解不开 | H4 | `crypto-store.js` loadOrCreateKey；store 测试 "never overwritten" | 2026-11-21 |
 | 图片附件是未加密的原始文件，不在 `.rtb` 备份里，删对话会一并删除且无法恢复 | H4 | `server.js` `/api/chat/delete`；备份只打包 db | 2026-11-21 |
-| 加密由开改关后，已有的加密备份无法还原（已在本地分支 `fix-restore-encryption` 修好，尚未合并） | H2 | 该分支的 store 测试 | 2026-11-21 |
-| 加密开启时还原或导入「加密关闭时」保存的数据，之后每次重启都会退回旧的 `data.enc`，丢掉中间的修改，且数据会变成明文（同一分支已修；已经处于两份并存状态的用户不会被自动救回） | H2 | 同上；临时数据实测 | 2026-11-21 |
+| 还原与导入沿用本机当前的加密设置，不跟随旧数据。否则 `data.enc` 与 `data.json` 会并存，每次重启都读回旧的 `data.enc`，丢掉中间的修改（`8491463` 修复；上游 issue #1 待回复） | H2 | store 测试 "keeps encryption on, and later edits survive restarts" | 2026-11-21 |
+| 已经处于「旧 `data.enc` + 新 `data.json`」并存状态的用户没有被救回：下次启动仍会用旧内容覆盖新内容。改启动流程前必须先由用户决定以哪份为准 | H4 | Guardian 第一轮审查；`store.js` 启动时优先读 `data.enc` | 2026-11-21 |
 | 比程序新的数据格式会被拒绝打开，所以提高 `SCHEMA` 等于让用户不能降版 | H2 | `store.js` migrate | 2026-11-21 |
 | `.bat`、`.ps1`、`.vbs` 的字节必须原样保留（CRLF、BOM、UTF-16） | H3 | `.gitattributes`；README | 2026-11-21 |
 
 ## 6. 权限
 
-不 push、不开 PR、不发布、不改 git 历史、不安装依赖，除非用户在对话里明说。push 和发布类命令在 `.claude/settings.json` 里直接禁止；改 H2 以上的文件会先弹出确认。不要换一种写法绕过它们（例如用命令行改文件）。不碰 `%LOCALAPPDATA%\AI-Roundtable` 里的真实数据。
+不 push、不开 PR、不发布、不改 git 历史、不安装依赖，除非用户在对话里明说。`.claude/settings.json` 里，push 每次都要用户确认，发布类命令直接禁止；改 H2 以上的文件会先弹出确认。只推到 `fork`，不推到 `origin`（上游）。不要换一种写法绕过它们（例如用命令行改文件）。不碰 `%LOCALAPPDATA%\AI-Roundtable` 里的真实数据。
