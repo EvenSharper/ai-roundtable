@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push)", "Bash(git push *)", "Bash(git -C * push *)", "Bash(git -C * push)",
+      "Bash(gh release *)", "Bash(npm publish *)", "Bash(npm publish)",
+      "PowerShell(git push)", "PowerShell(git push *)", "PowerShell(git -C * push *)", "PowerShell(git -C * push)",
+      "PowerShell(gh release *)", "PowerShell(npm publish *)", "PowerShell(npm publish)"
+    ],
+    "ask": [
+      "Bash(gh pr create *)", "Bash(git reset --hard *)", "Bash(git clean *)",
+      "PowerShell(gh pr create *)", "PowerShell(git reset --hard *)", "PowerShell(git clean *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/scripts/gate.mjs", "--hook"],
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}
