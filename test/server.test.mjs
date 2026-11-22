@@ -70,6 +70,51 @@ test('local API: foreign Host, foreign Origin and missing token are refused; sec
   } finally { s.quit(); }
 });
 
+test('linked workspace material refreshes the selected file and refuses an outside path', async () => {
+  const s = await boot();
+  try {
+    const root = path.join(s.dataDir, 'materials');
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(s.dataDir, 'materials-root.txt'), root);
+    const source = path.join(root, 'status.md');
+    fs.writeFileSync(source, '第一版');
+    fs.writeFileSync(path.join(s.dataDir, 'outside.md'), 'outside');
+    const initial = (await s.api('/api/state')).json.projects[0], pid = initial.id;
+    assert.equal(initial.materialsRoot, root);
+    const linked = (await s.api('/api/materials/link', { pid, sourcePath: 'status.md', share: ['claude'] })).json.materials[0];
+    assert.equal(linked.text, '第一版');
+    assert.equal(linked.auto, false);
+    assert.deepEqual(linked.share, ['claude']);
+    assert.ok(linked.sourceModified);
+    fs.writeFileSync(source, '第二版');
+    const refreshed = (await s.api('/api/materials/refresh', { pid, id: linked.id })).json.materials[0];
+    assert.equal(refreshed.text, '第二版');
+    assert.equal(refreshed.id, linked.id);
+    assert.equal(fs.readFileSync(source, 'utf8'), '第二版');
+    const cid = (await s.api('/api/chat/new', { pid })).json.id;
+    const preview = await s.api('/api/preview', { pid, cid, q: '進度為何', ids: ['claude', 'chatgpt'], mod: 'claude', materials: [linked.id] });
+    assert.match(preview.text, /第二版/);
+    assert.doesNotMatch(preview.text, /第一版/);
+    assert.ok((await s.api('/api/materials/link', { pid, sourcePath: '../outside.md' })).json.error);
+
+    const nextRoot = path.join(s.dataDir, 'new-materials');
+    fs.mkdirSync(nextRoot);
+    fs.writeFileSync(path.join(nextRoot, 'status.md'), '第三版');
+    assert.ok((await s.api('/api/materials/root', { pid, root: 'status.md' })).json.error);
+    const changed = (await s.api('/api/materials/root', { pid, root: nextRoot })).json;
+    assert.equal(changed.materialsRoot, fs.realpathSync(nextRoot));
+    assert.equal(changed.materials[0].text, '第二版');
+    assert.equal(changed.materials[0].sourceRoot, fs.realpathSync(root));
+    const final = (await s.api('/api/materials/refresh', { pid, id: linked.id })).json.materials[0];
+    assert.equal(final.text, '第三版');
+    assert.equal(final.sourceRoot, changed.materialsRoot);
+    const other = (await s.api('/api/project/new', { name: 'Other project' })).json.id;
+    const projects = (await s.api('/api/state')).json.projects;
+    assert.equal(projects.find(p => p.id === pid).materialsRoot, changed.materialsRoot);
+    assert.equal(projects.find(p => p.id === other).materialsRoot, root);
+  } finally { s.quit(); }
+});
+
 test('HTTP: unchecked moderator is refused before anything is sent; a normal send completes', async () => {
   const s = await boot();
   try {

@@ -54,34 +54,68 @@ export function bindRelay() {
 /* ---------- 共用資料區 ---------- */
 export function openMaterials() { renderMat(); if (!$('#dlgMat').open) $('#dlgMat').showModal(); }
 function renderMat() {
-  const mats = (P() || {}).materials || [], sel = S.pref.materials, keys = Object.keys(S.D.settings.ais);
+  const project = P() || {}, root = project.materialsRoot || '';
+  const mats = project.materials || [], sel = S.pref.materials, keys = Object.keys(S.D.settings.ais);
   const on = m => (sel ? sel.includes(m.id) : m.auto !== false);
   $('#matBody').innerHTML = `<div class="small">放進這裡的文件、網頁與參考資料，可以指定要分享給哪些 AI。文字內容會附在提示裡；分享給所有 AI 的檔案也會放進工作資料夾 materials/，讓有讀取權限的 AI 直接讀。這些內容都視為參考資料，不是指令。</div>
+    <label for="matRoot">專案資料來源</label>
+    <div class="row2"><input class="field grow" id="matRoot" value="${esc(root)}" placeholder="資料夾完整路徑" spellcheck="false"><button class="btn" id="matRootSave">儲存來源</button></div>
+    <div class="small">連結檔案時使用相對於來源的路徑。更換來源後，點「重新讀取」才會更新已連結的資料。</div>
     <label>這個專案的資料</label>
     <div class="blist">${mats.map(m => `<div data-mid="${m.id}"><input type="checkbox" data-use ${on(m) ? 'checked' : ''} title="這次提問附上"><span class="grow"><b>${esc(m.title)}</b>　<span class="small">${{ text: '文字', url: '網址', file: '檔案' }[m.kind]}${m.kind === 'url' ? '：' + esc(m.url) : `：${(m.chars ?? (m.text || '').length).toLocaleString()} 字`}　分享給：${m.share === 'all' ? '所有 AI' : m.share.map(k => esc(ai(k).name)).join('、') || '沒有'}</span></span>
+      ${m.sourcePath ? '<span class="small" title="' + esc(m.sourceRoot || root) + '">' + esc(m.sourcePath) + ' · ' + esc(new Date(m.sourceModified).toLocaleString()) + (m.sourceRoot && m.sourceRoot !== root ? ' <span>來自上一個來源</span>' : '') + '</span><button class="btn" data-refresh>重新讀取 / Refresh</button>' : ''}
       <label class="sk"><input type="checkbox" data-auto ${m.auto !== false ? 'checked' : ''}> 預設附上</label><button class="btn" data-del>刪除</button></div>`).join('') || '<div>還沒有資料</div>'}</div>
     <label>新增資料</label>
-    <div class="row2"><select class="field" id="matKind"><option value="text">貼上文字</option><option value="file">上傳文字檔</option><option value="url">網址</option></select><input class="field" id="matTitle" placeholder="標題"></div>
+    <div class="row2"><select class="field" id="matKind"><option value="text">貼上文字</option><option value="file">上傳文字檔</option><option value="url">網址</option><option value="linked">連結工作區文字檔 / Link workspace file</option></select><input class="field" id="matTitle" placeholder="標題"></div>
     <textarea class="field" id="matText" rows="4" style="width:100%" placeholder="貼上內容（最多 200,000 字）"></textarea>
     <input class="field" id="matUrl" placeholder="https://…" hidden style="width:100%"><input class="field" type="file" id="matFile" hidden accept=".txt,.md,.csv,.json,.html,.htm,.xml,.yml,.yaml,.log">
+    <input class="field" id="matSource" hidden style="width:100%" aria-label="工作區相對路徑 / Workspace-relative path" placeholder="子資料夾/檔案.md">
     <div class="row2"><span class="small">分享給：</span><label class="sk"><input type="radio" name="matShare" value="all" checked> 所有 AI</label>${keys.map(k => `<label class="sk"><input type="checkbox" data-share="${k}"> ${esc(ai(k).name)}</label>`).join('')}<button class="btn gold" id="matAdd">加入</button></div>`;
   $('#matFoot').textContent = sel ? '這次提問使用自選的資料' : '這次提問使用「預設附上」的資料';
   const kind = () => $('#matKind').value;
-  $('#matKind').onchange = () => { $('#matText').hidden = kind() === 'url'; $('#matUrl').hidden = kind() !== 'url'; $('#matFile').hidden = kind() !== 'file'; };
+  $('#matKind').onchange = () => {
+    $('#matText').hidden = kind() !== 'text';
+    $('#matUrl').hidden = kind() !== 'url';
+    $('#matFile').hidden = kind() !== 'file';
+    $('#matSource').hidden = kind() !== 'linked';
+  };
 }
 export function bindMaterials() {
   $('#matBody').onclick = async e => {
+    if (e.target.id === 'matRootSave') {
+      const pid = S.pid;
+      const r = await api('/api/materials/root', { pid, root: $('#matRoot').value });
+      if (r.error) return toast(r.error, 4000);
+      if (S.pid !== pid) return;
+      P().materialsRoot = r.materialsRoot;
+      P().materials = r.materials;
+      renderMat(); renderExtras(); refreshCheck();
+      return toast('已儲存資料來源');
+    }
     if (e.target.id === 'matAdd') {
       const kind = $('#matKind').value, f = $('#matFile').files[0];
       let text = $('#matText').value, fileName = '';
       if (kind === 'file') { if (!f) return toast('請選擇文字檔'); if (f.size > 2 * 1024 * 1024) return toast('檔案太大，請只放需要的部分'); text = await f.text(); fileName = f.name; }
       const picked = [...document.querySelectorAll('#matBody [data-share]:checked')].map(x => x.dataset.share);
       const share = picked.length ? picked : 'all';
-      const r = await api('/api/materials/add', { pid: S.pid, kind, title: $('#matTitle').value || (f ? f.name : ''), text, url: $('#matUrl').value, fileName, share });
+      const pid = S.pid, title = $('#matTitle').value;
+      const r = kind === 'linked'
+        ? await api('/api/materials/link', { pid, title, sourcePath: $('#matSource').value, share })
+        : await api('/api/materials/add', { pid, kind, title: title || (f ? f.name : ''), text, url: $('#matUrl').value, fileName, share });
       if (r.error) return toast(r.error, 4000);
+      if (S.pid !== pid) return;
       P().materials = r.materials; renderMat(); renderExtras(); refreshCheck(); return toast('已加入');
     }
     const row = e.target.closest('[data-mid]'); if (!row) return;
+    if (e.target.matches('[data-refresh]')) {
+      const pid = S.pid;
+      const r = await api('/api/materials/refresh', { pid, id: row.dataset.mid });
+      if (r.error) return toast(r.error, 4000);
+      if (S.pid !== pid) return;
+      P().materials = r.materials;
+      renderMat(); renderExtras(); refreshCheck();
+      return toast('已重新讀取 / Refreshed');
+    }
     if (e.target.matches('[data-del]')) { if (!confirm('刪除這份資料？')) return; const r = await api('/api/materials/delete', { pid: S.pid, id: row.dataset.mid }); P().materials = r.materials; if (S.pref.materials) S.pref.materials = S.pref.materials.filter(x => x !== row.dataset.mid); savePref(); renderMat(); renderExtras(); refreshCheck(); }
   };
   $('#matBody').onchange = async e => {
@@ -122,6 +156,7 @@ export async function openFiles(focus) {
   const src = f => f.output ? `成果 v${f.output.version}${f.output.template ? '（' + esc((S.D.outputTemplates.find(t => t.key === f.output.template) || {}).name || '') + '）' : ''}${f.output.from?.ai ? ' · ' + esc(ai(f.output.from.ai).name) : ''}`
     : f.writtenBy ? `${esc(ai(f.writtenBy.ai).name)} 寫入` : f.path.startsWith('materials/') ? '共用資料' : f.link ? '連結（不跟隨）' : '其他';
   $('#filesBody').innerHTML = `<div class="small">這個對話的工作資料夾：${esc(F.dir)}　AI 的實際存取範圍依各自的權限設定與 CLI 能力而定。</div>
+    <div class="row2"><span class="small"><b>專案資料來源</b> ${esc(P()?.materialsRoot || '')}</span><button class="btn" id="fSource">設定資料來源</button></div>
     <div class="fgrid" style="margin-top:8px"><div class="blist" id="flist">${F.files.map(f => `<div data-path="${esc(f.path)}"><span class="grow">${esc(f.path)}</span><span class="small">${src(f)}</span></div>`).join('') || '<div>目前沒有檔案</div>'}</div>
     <div><div class="row2"><button class="btn" id="fDl" disabled>下載</button><button class="btn" id="fRestore" disabled>回到這個版本</button><button class="btn" id="fCmp">比較版本</button></div><div class="fprev" id="fprev"><span class="small">選擇左邊的檔案預覽</span></div></div></div>`;
   if (!$('#dlgFiles').open) $('#dlgFiles').showModal();
@@ -139,6 +174,7 @@ async function showFile(p) {
 }
 export function bindFiles() {
   $('#filesBody').onclick = async e => {
+    if (e.target.id === 'fSource') { $('#dlgFiles').close(); return openMaterials(); }
     const it = e.target.closest('#flist [data-path]'); if (it) return showFile(it.dataset.path);
     if (e.target.id === 'fDl' && cur) {
       const r = await api('/api/files/download', { pid: S.pid, cid: S.cid, path: cur.path }); if (r.error) return toast(r.error, 4000);

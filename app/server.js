@@ -9,6 +9,7 @@ const providers = require('./lib/providers');
 const diagnose = require('./lib/diagnose');
 const sec = require('./lib/security');
 const { workdirFor, resolveInside, listFiles } = require('./lib/workspace');
+const { defaultMaterialsRoot, validateMaterialsRoot, readLinkedMaterial } = require('./lib/linked-materials');
 const { BRIEF_FIELDS, MEM_LABEL } = require('./lib/context');
 const outputs = require('./lib/outputs');
 const { search } = require('./lib/search');
@@ -159,6 +160,8 @@ async function main({ port = Number(arg('--port', 3456)), dataDir = arg('--data-
     }
   });
 
+  const materialsRoot = p => p.materialsRoot ?? defaultMaterialsRoot(paths.dataDir);
+
   function stateView() {
     const s = db().settings;
     const ais = Object.fromEntries(Object.entries(s.ais).map(([k, a]) => [k, { ...a, guarantee: a.mode === 'manual' ? null : providers.guarantee(a), needsAck: providers.needsAck(a), seat: !DEFAULT_AIS()[k],
@@ -168,7 +171,7 @@ async function main({ port = Number(arg('--port', 3456)), dataDir = arg('--data-
       version: VERSION, settings: { ...s, ais, briefTemplates: s.briefTemplates || defaultBriefs(s.lang), relayTemplates: s.relayTemplates || defaultRelays(s.lang), teamTemplates: s.teamTemplates || defaultTeams(s.lang) },
       outputTemplates: Object.entries(outputs.OUTPUT_TEMPLATES).map(([key, v]) => ({ key, name: v.name })), levels: providers.LEVELS.map(k => ({ key: k, label: providers.LEVEL_LABEL[k] })),
       briefFields: BRIEF_FIELDS, memLabels: MEM_LABEL, queue: (db().queue || []).slice(-50).map(({ req, ...q }) => ({ ...q, q: String(req?.q || '').slice(0, 60), ids: req?.ids, mode: req?.mode })), queuePaused: !!db().queuePaused,
-      projects: db().projects.map(p => ({ ...p, materials: (p.materials || []).map(({ text, ...m }) => ({ ...m, chars: (text || '').length })), chats: p.chats.map(c => ({ id: c.id, title: c.title, updated: c.updated, status: (c.turns.at(-1) || {}).status, tags: c.tags || [], branchOf: c.branchOf ? { cid: c.branchOf.cid, title: c.branchOf.title } : undefined })).sort((a, b) => b.updated - a.updated) })),
+      projects: db().projects.map(p => ({ ...p, materialsRoot: materialsRoot(p), materials: (p.materials || []).map(({ text, ...m }) => ({ ...m, chars: (text || '').length })), chats: p.chats.map(c => ({ id: c.id, title: c.title, updated: c.updated, status: (c.turns.at(-1) || {}).status, tags: c.tags || [], branchOf: c.branchOf ? { cid: c.branchOf.cid, title: c.branchOf.title } : undefined })).sort((a, b) => b.updated - a.updated) })),
       privacy: { ...store.state, dataDir: paths.dataDir, workRoot: paths.workRoot, backups: store.listBackups().length },
       run: engine.state(),
     };
@@ -322,6 +325,30 @@ async function main({ port = Number(arg('--port', 3456)), dataDir = arg('--data-
         const n = branchChat({ project: p, chat: c, turnId: b.turnId, round: b.round, title: b.title, uid });
         const copied = copyWorkspace(workdirFor(paths.workRoot, p.id, c.id), workdirFor(paths.workRoot, p.id, n.id));
         store.save(); return { id: n.id, copied };
+      }
+      case '/api/materials/root': {
+        if (!p) throw new Error('找不到專案');
+        const root = validateMaterialsRoot(b.root);
+        const previousRoot = materialsRoot(p);
+        for (const material of p.materials || []) {
+          if (material.sourcePath && !material.sourceRoot) material.sourceRoot = previousRoot;
+        }
+        p.materialsRoot = root;
+        store.save(); return { materialsRoot: root, materials: p.materials || [] };
+      }
+      case '/api/materials/link': {
+        if (!p) throw new Error('找不到專案');
+        const material = readLinkedMaterial(materialsRoot(p), b.sourcePath, MAX_MATERIAL);
+        const share = Array.isArray(b.share) ? b.share.filter(k => S.ais[k]) : 'all';
+        const title = String(b.title || path.basename(material.sourcePath)).trim().slice(0, 80);
+        (p.materials ||= []).push({ id: uid(), kind: 'text', title, ...material, at: Date.now(), share, auto: false });
+        store.save(); return { materials: p.materials };
+      }
+      case '/api/materials/refresh': {
+        const material = p && (p.materials || []).find(m => m.id === b.id && m.sourcePath);
+        if (!material) throw new Error('找不到已連結的資料 / Linked material not found');
+        Object.assign(material, readLinkedMaterial(materialsRoot(p), material.sourcePath, MAX_MATERIAL));
+        store.save(); return { materials: p.materials };
       }
       case '/api/materials/add': {
         if (!p) throw new Error('找不到專案');
