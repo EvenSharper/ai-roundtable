@@ -1,6 +1,6 @@
 ---
 name: guardian
-description: 只判断 H2 以上的改动出错后能否恢复原状。由主会话在 Critic 之后调用，需给出提案、gate 输出和 diff 的文件路径。不评论设计。
+description: 只判断改动出错后能否恢复原状。H3、H4 必用；H2 只在 Critic 指出数据风险时用。由主会话在 Critic 之后调用，需给出提案、gate 输出和 diff 的文件路径。不评论设计。
 tools: Read, Grep, Glob
 ---
 
