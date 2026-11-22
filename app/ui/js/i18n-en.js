@@ -358,7 +358,7 @@ export default {
   '至少要有兩個回答才能比較': 'You need at least two answers to compare', '未知的操作': 'Unknown action', '錯誤：': 'Error: ',
   '這場討論還沒有成功的回答，無法建立分支': 'This discussion has no successful answers yet, so it can\'t be branched', '{}（分支）': '{} (branch)',
   '失敗：': 'failed: ', '資料金鑰格式不正確（可能不是同一個 Windows 帳戶）': 'The data key format is wrong (maybe a different Windows account)',
-  '資料金鑰驗證失敗': 'Data key verification failed', '不是加密資料檔': 'Not an encrypted data file', '不是有密碼保護的匯出檔': 'Not a password-protected export',
+  '資料金鑰驗證失敗': 'Data key verification failed', '找不到資料金鑰，無法解開加密的備份': 'The data key is missing, so the encrypted backup cannot be opened', '不是加密資料檔': 'Not an encrypted data file', '不是有密碼保護的匯出檔': 'Not a password-protected export',
   '密碼錯誤或檔案已損壞': 'Wrong password or damaged file',
   '按「安裝」會開一個視窗，先顯示安裝程式的來源網址，確認後才下載執行；完成後按「重新檢查」。': '"Install" opens a window that shows the installer\'s source URL first and downloads only after you confirm; click "Check again" when done.',
   '這個 CLI 版本太舊，缺少本程式需要的安全參數。請更新後再測試。': 'This CLI version is too old and lacks security flags this app needs. Update it and test again.',

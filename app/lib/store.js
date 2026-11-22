@@ -75,6 +75,7 @@ function writeAtomic(file, buf) {
 }
 const stamp = now => new Date(now).toISOString().replace(/[:.]/g, '-');
 
+// 開啟資料：讀取、遷移、還原損壞的檔案，並回傳之後存取資料的方法。加密與明文兩種狀態都只在這裡處理，其他程式不碰檔案
 function openStore(paths, { protector = cs.dpapiProtector(), now = () => Date.now() } = {}) {
   fs.mkdirSync(paths.dataDir, { recursive: true }); fs.mkdirSync(paths.backupDir, { recursive: true });
   const state = { encryption: 'off', encryptionError: '', recovered: null, legacyImported: null, legacyPlaintext: null, migratedFrom: null };
@@ -82,7 +83,15 @@ function openStore(paths, { protector = cs.dpapiProtector(), now = () => Date.no
 
   const tryKey = () => { try { key = cs.loadOrCreateKey(paths.keyFile, protector); return true; } catch (e) { key = null; state.encryptionError = e.message; return false; } };
   const pack = obj => { const plain = Buffer.from(JSON.stringify(obj)); return key ? cs.seal(key, plain) : plain; };
-  const unpack = buf => JSON.parse((cs.isSealed(buf) ? cs.open(key, buf) : buf).toString('utf8').replace(/^﻿/, ''));
+  // 讀加密資料用的金鑰。關閉加密後 key 是 null（代表之後存明文），但以前的加密備份仍要解得開，所以另外取得；
+  // 金鑰檔不在時直接報錯：這裡只是讀取，建立新金鑰也解不開舊資料
+  const readKey = () => {
+    if (key) return key;
+    if (!fs.existsSync(paths.keyFile)) throw new Error('找不到資料金鑰，無法解開加密的備份');
+    return cs.loadOrCreateKey(paths.keyFile, protector);
+  };
+  // 加密與明文備份都能讀：是否加密看檔案本身，不看目前的加密設定
+  const unpack = buf => JSON.parse((cs.isSealed(buf) ? cs.open(readKey(), buf) : buf).toString('utf8').replace(/^﻿/, ''));
 
   function backup(reason = 'manual') {
     if (!db) return null;
@@ -158,12 +167,22 @@ function openStore(paths, { protector = cs.dpapiProtector(), now = () => Date.no
       backup('imported-v1');
     }
   }
+  // 換成還原或匯入的資料，但加密與否沿用這台電腦目前的設定。
+  // 若跟著舊資料變成「關閉」，下次啟動會另存明文卻留下 data.enc，再下次又讀回舊的 data.enc，中間的修改會遺失
+  function replaceDb(data) {
+    const encryption = db.settings.privacy.encryption;
+    db = migrate(data).db;
+    db.settings.privacy.encryption = encryption;
+    save();
+    return db;
+  }
   const last = listBackups()[0];
   if (!last || now() - last.at > DAY) backup('daily');
 
   return {
     get db() { return db; }, state, paths, save, backup, listBackups,
-    restore(name) { const data = readBackup(name); backup('before-restore'); db = migrate(data).db; save(); return db; },
+    // 還原前先備份目前的資料，選錯了還能回來
+    restore(name) { const data = readBackup(name); backup('before-restore'); return replaceDb(data); },
     setEncryption(on) {
       db.settings.privacy.encryption = on ? 'on' : 'off';
       if (on) { state.encryption = key || tryKey() ? 'on' : 'failed'; }
@@ -175,11 +194,12 @@ function openStore(paths, { protector = cs.dpapiProtector(), now = () => Date.no
       const plain = Buffer.from(JSON.stringify(db, null, 1));
       return password ? cs.exportSeal(password, plain) : plain;
     },
+    // 確認是本程式的資料檔後，先備份目前的資料再換成匯入的內容，匯錯了還能回來
     importData(buf, { password } = {}) {
       const plain = cs.isExport(buf) ? cs.exportOpen(password, buf) : buf;
       const data = JSON.parse(plain.toString('utf8').replace(/^﻿/, ''));
       if (!data || !Array.isArray(data.projects)) throw new Error('不是 AI圓桌會議 的資料檔');
-      backup('before-import'); db = migrate(data).db; save(); return db;
+      backup('before-import'); return replaceDb(data);
     },
     purgeExpired(days = db.settings.privacy.retentionDays) {
       if (!days) return 0;

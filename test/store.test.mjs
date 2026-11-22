@@ -160,6 +160,48 @@ test('turning encryption off and on rewrites the data file accordingly', () => {
   assert.ok(fs.existsSync(paths.encFile) && !fs.existsSync(paths.plainFile));
 });
 
+test('an encrypted backup can still be restored after encryption is turned off, also after a restart', () => {
+  const { paths } = tmp();
+  const s = openStore(paths, { protector: fakeProtector });
+  s.db.projects[0].memory = '加密時的內容'; s.save(); const b = s.backup('manual');
+  s.setEncryption(false);
+  s.db.projects[0].memory = '後來的內容'; s.save();
+  s.restore(b);
+  assert.equal(s.db.projects[0].memory, '加密時的內容');
+  const before = s.listBackups().find(x => x.name.includes('before-restore')).name;   // 還原前的備份能退回原樣
+  assert.equal(s.restore(before).projects[0].memory, '後來的內容');
+  assert.equal(s.db.settings.privacy.encryption, 'off');   // 還原內容不會改變目前的加密設定
+  assert.ok(fs.existsSync(paths.plainFile) && !fs.existsSync(paths.encFile));
+  const r = openStore(paths, { protector: fakeProtector });
+  assert.equal(r.state.encryption, 'off');
+  assert.equal(r.restore(b).projects[0].memory, '加密時的內容');
+});
+
+test('restoring or importing data saved with encryption off keeps encryption on, and later edits survive restarts', () => {
+  for (const how of ['restore', 'import']) {
+    const { paths } = tmp(), open = () => openStore(paths, { protector: fakeProtector });
+    const s = open();
+    s.setEncryption(false); const b = s.backup('manual'), exported = s.exportData(); s.setEncryption(true);
+    if (how === 'restore') s.restore(b); else s.importData(exported);
+    assert.equal(s.db.settings.privacy.encryption, 'on');
+    const s2 = open(); s2.db.projects[0].memory = '還原後的修改'; s2.save();
+    assert.ok(!fs.existsSync(paths.plainFile), how);
+    assert.equal(open().db.projects[0].memory, '還原後的修改', how);
+  }
+});
+
+test('a missing key file gives a clear error, changes nothing and never creates a new key', () => {
+  const { paths } = tmp();
+  const s = openStore(paths, { protector: fakeProtector });
+  const b = s.backup('manual'); s.setEncryption(false);
+  s.db.projects[0].memory = '目前的內容'; s.save();
+  fs.rmSync(paths.keyFile); const n = s.listBackups().length;
+  assert.throws(() => s.restore(b), /找不到資料金鑰/);
+  assert.equal(s.db.projects[0].memory, '目前的內容');
+  assert.equal(s.listBackups().length, n);
+  assert.ok(!fs.existsSync(paths.keyFile));
+});
+
 test('real Windows DPAPI wraps and unwraps the data key', { skip: process.platform !== 'win32' }, () => {
   const p = cs.dpapiProtector(), key = Buffer.from('0123456789abcdef0123456789abcdef');
   const w = p.protect(key);
